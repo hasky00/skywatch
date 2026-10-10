@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Skywatch CPH</title>
+<meta name="theme-color" content="#0d1418">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23f2b33d' d='M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed map, airport-signage header, flight strips in a side rail (desktop) / bottom sheet (phone) */
+:root{
+  --bg:#eef1ef; --panel:#ffffff; --ink:#132026; --muted:#5d6b70; --line:#d5dcda;
+  --sign:#f2b33d; --sign-ink:#1a1405; --sel:#0e7c86;
+  --low:#c76a1a; --mid:#1f8a6e; --high:#4c5fd5; --gnd:#8a9497;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0d1418; --panel:#141e23; --ink:#e3ebe8; --muted:#8c9ca0; --line:#253339;
+  --sign:#f2b33d; --sign-ink:#1a1405; --sel:#4fd1c5;
+  --low:#f0954a; --mid:#4fd1a5; --high:#8d9bff; --gnd:#6b777a; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.4 var(--mono);display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top,0px));background:var(--sign);color:var(--sign-ink);flex-wrap:wrap}
+.brand{font:700 26px/1 var(--display);letter-spacing:.04em;text-transform:uppercase}
+.status{font-size:12px;display:flex;align-items:center;gap:6px;margin-left:auto}
+.dot{width:8px;height:8px;border-radius:50%;background:#1d7a3a}
+.dot.err{background:#b3261e}
+.dot.live{animation:blink 2s infinite}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
+main{flex:1;display:flex;min-height:0}
+#map{flex:1;min-width:0;background:var(--bg)}
+aside{width:340px;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.rail-head{display:flex;align-items:baseline;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line)}
+.rail-head h2{margin:0;font:700 18px/1 var(--display);letter-spacing:.06em;text-transform:uppercase}
+.rail-head span{color:var(--muted);font-size:12px}
+.controls{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+input,select,button{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px}
+input{flex:1;min-width:0}
+button{cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible,.strip:focus-visible{outline:2px solid var(--sel);outline-offset:2px}
+#list{list-style:none;margin:0;padding:0;overflow-y:auto;flex:1}
+.strip{display:grid;grid-template-columns:6px 1fr auto;gap:0 12px;padding:9px 16px 9px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.strip:hover{background:color-mix(in srgb,var(--sel) 8%,transparent)}
+.strip.on{background:color-mix(in srgb,var(--sel) 16%,transparent)}
+.band{grid-row:1/3;border-radius:0 3px 3px 0}
+.cs{font-weight:500;font-size:15px}
+.meta{color:var(--muted);font-size:12px;grid-column:2}
+.alt{text-align:right;font-variant-numeric:tabular-nums;grid-row:1/3;grid-column:3;align-self:center}
+.alt small{display:block;color:var(--muted);font-size:11px}
+.legend{display:flex;gap:12px;padding:10px 16px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.empty{padding:24px 16px;color:var(--muted)}
+.plane{color:var(--mid);transition:transform .3s}
+.plane svg{display:block;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))}
+.plane.on svg{filter:drop-shadow(0 0 4px var(--sel))}
+.leaflet-container{font-family:var(--mono)}
+.tiles-dark{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6)}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--ink)}
+.pop b{font:700 18px/1 var(--display);letter-spacing:.04em}
+.pop table{border-collapse:collapse;margin-top:6px;font-variant-numeric:tabular-nums}
+.pop td{padding:1px 10px 1px 0}
+.pop td:first-child{color:var(--muted)}
+.pop a{color:var(--sel)}
+#toggle{display:none}
+@media (max-width:760px){
+  main{flex-direction:column}
+  aside{width:auto;border-left:0;border-top:1px solid var(--line);max-height:42%;padding-bottom:env(safe-area-inset-bottom,0px)}
+  aside.min{max-height:none}
+  aside.min #list,aside.min .controls,aside.min .legend{display:none}
+  #toggle{display:inline-block;padding:4px 10px;font-size:12px}
+  .brand{font-size:22px}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Skywatch CPH</div>
+  <div class="status"><span class="dot live" id="dot"></span><span id="stat">Connecting…</span></div>
+</header>
+<main>
+  <div id="map" role="application" aria-label="Map of live aircraft"></div>
+  <aside id="rail">
+    <div class="rail-head">
+      <h2>Flights <span id="count"></span></h2>
+      <button id="toggle" aria-expanded="true">Hide list</button>
+    </div>
+    <div class="controls">
+      <input id="q" type="search" placeholder="Search callsign, reg, type" aria-label="Search flights">
+      <select id="radius" aria-label="Search radius">
+        <option value="40">40 nm</option>
+        <option value="80" selected>80 nm</option>
+        <option value="150">150 nm</option>
+      </select>
+      <button id="me" title="Center on my location">Near me</button>
+    </div>
+    <ul id="list"><li class="empty">Loading planes…</li></ul>
+    <div class="legend">
+      <span><i style="background:var(--gnd)"></i>Ground</span>
+      <span><i style="background:var(--low)"></i>&lt; 10,000 ft</span>
+      <span><i style="background:var(--mid)"></i>10–25,000 ft</span>
+      <span><i style="background:var(--high)"></i>&gt; 25,000 ft</span>
+    </div>
+  </aside>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const CPH = [55.618, 12.656];
+let center = CPH.slice(), planes = [], selected = null, timer = null;
+const markers = new Map();
+const $ = id => document.getElementById(id);
+
+const dark = matchMedia("(prefers-color-scheme: dark)");
+const map = L.map("map", { zoomControl: true, attributionControl: true }).setView(CPH, 8);
+let tiles;
+function setTiles() {
+  if (tiles) tiles.remove();
+  tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    className: dark.matches ? "tiles-dark" : "",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · data adsb.lol'
+  }).addTo(map);
+}
+setTiles();
+dark.addEventListener("change", setTiles);
+L.circleMarker(CPH, { radius: 5, color: "#f2b33d", weight: 2, fillOpacity: .6 }).addTo(map).bindTooltip("Copenhagen Airport (CPH)");
+
+const bandColor = p => p.ground ? "var(--gnd)" : p.alt == null ? "var(--muted)" : p.alt < 10000 ? "var(--low)" : p.alt < 25000 ? "var(--mid)" : "var(--high)";
+const fmt = n => n == null ? "–" : Math.round(n).toLocaleString("en-US");
+const label = p => p.callsign || p.reg || p.hex.toUpperCase();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function icon(p) {
+  const on = selected === p.hex ? " on" : "";
+  return L.divIcon({
+    className: "", iconSize: [26, 26], iconAnchor: [13, 13],
+    html: `<div class="plane${on}" style="color:${bandColor(p)};transform:rotate(${p.track || 0}deg)"><svg width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" stroke="rgba(0,0,0,.35)" stroke-width=".6" d="M12 1.5c.8 0 1.4.9 1.4 2V9l8 4.6v2.1l-8-2.4v5.2l2.2 1.6V22L12 21l-3.6 1v-1.9l2.2-1.6v-5.2l-8 2.4v-2.1l8-4.6V3.5c0-1.1.6-2 1.4-2z"/></svg></div>`
+  });
+}
+
+function popup(p) {
+  const fr24 = p.callsign ? `<a href="https://www.flightradar24.com/${encodeURIComponent(p.callsign)}" target="_blank" rel="noopener">More on Flightradar24</a>` : "";
+  return `<div class="pop"><b>${esc(label(p))}</b>
+  <table>
+    <tr><td>Reg</td><td>${esc(p.reg || "–")}</td></tr>
+    <tr><td>Type</td><td>${esc(p.type || "–")}</td></tr>
+    <tr><td>Altitude</td><td>${p.ground ? "On ground" : fmt(p.alt) + " ft"}</td></tr>
+    <tr><td>Speed</td><td>${fmt(p.speed)} kt</td></tr>
+    <tr><td>Heading</td><td>${fmt(p.track)}°</td></tr>
+    <tr><td>Climb</td><td>${fmt(p.vrate)} ft/min</td></tr>
+    <tr><td>Squawk</td><td>${esc(p.squawk || "–")}</td></tr>
+  </table>${fr24}</div>`;
+}
+
+function select(hex, fly) {
+  selected = hex;
+  const p = planes.find(x => x.hex === hex);
+  const m = markers.get(hex);
+  if (p && m) {
+    if (fly) map.panTo([p.lat, p.lon]);
+    m.setPopupContent(popup(p)).openPopup();
+  }
+  draw();
+}
+
+function draw() {
+  const seen = new Set();
+  for (const p of planes) {
+    seen.add(p.hex);
+    let m = markers.get(p.hex);
+    if (!m) {
+      m = L.marker([p.lat, p.lon], { icon: icon(p), keyboard: false }).addTo(map).bindPopup(popup(p));
+      m.on("click", () => select(p.hex, false));
+      markers.set(p.hex, m);
+    } else {
+      m.setLatLng([p.lat, p.lon]).setIcon(icon(p));
+      if (m.isPopupOpen()) m.setPopupContent(popup(p));
+    }
+  }
+  for (const [hex, m] of markers) if (!seen.has(hex)) { m.remove(); markers.delete(hex); }
+
+  const q = $("q").value.trim().toLowerCase();
+  const rows = planes
+    .filter(p => !q || [p.callsign, p.reg, p.type, p.hex].some(v => v && v.toLowerCase().includes(q)))
+    .sort((a, b) => (a.dist ?? 999) - (b.dist ?? 999));
+  $("count").textContent = `· ${rows.length}`;
+  $("list").innerHTML = rows.length ? rows.map(p => `
+    <li class="strip${selected === p.hex ? " on" : ""}" tabindex="0" data-hex="${p.hex}">
+      <span class="band" style="background:${bandColor(p)}"></span>
+      <span class="cs">${esc(label(p))}</span>
+      <span class="alt">${p.ground ? "GND" : fmt(p.alt)}<small>${p.ground ? "" : "ft"} · ${fmt(p.speed)} kt</small></span>
+      <span class="meta">${esc([p.type, p.reg].filter(Boolean).join(" · ") || "Unknown aircraft")}${p.dist != null ? " · " + p.dist.toFixed(0) + " nm" : ""}</span>
+    </li>`).join("") : `<li class="empty">${q ? "No flights match that search." : "No planes in range right now."}</li>`;
+}
+
+$("list").addEventListener("click", e => { const li = e.target.closest(".strip"); if (li) select(li.dataset.hex, true); });
+$("list").addEventListener("keydown", e => { if (e.key === "Enter") { const li = e.target.closest(".strip"); if (li) select(li.dataset.hex, true); } });
+$("q").addEventListener("input", draw);
+$("radius").addEventListener("change", load);
+$("toggle").addEventListener("click", () => {
+  const min = $("rail").classList.toggle("min");
+  $("toggle").textContent = min ? "Show list" : "Hide list";
+  $("toggle").setAttribute("aria-expanded", String(!min));
+  setTimeout(() => map.invalidateSize(), 50);
+});
+$("me").addEventListener("click", () => {
+  if (!navigator.geolocation) return setStatus("Location isn't available in this browser.", true);
+  $("me").textContent = "Locating…";
+  navigator.geolocation.getCurrentPosition(pos => {
+    center = [pos.coords.latitude, pos.coords.longitude];
+    map.setView(center, 9);
+    $("me").textContent = "Near me";
+    load();
+  }, () => { $("me").textContent = "Near me"; setStatus("Location was blocked. Showing Copenhagen.", true); });
+});
+
+function setStatus(text, err) {
+  $("stat").textContent = text;
+  $("dot").className = "dot" + (err ? " err" : " live");
+}
+
+async function load() {
+  clearTimeout(timer);
+  try {
+    const r = await fetch(`/api/planes?lat=${center[0]}&lon=${center[1]}&dist=${$("radius").value}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    planes = d.planes;
+    draw();
+    setStatus(`Live · updated ${new Date().toLocaleTimeString("en-GB")}`);
+  } catch (e) {
+    setStatus(e.message || "Couldn't reach flight data. Retrying…", true);
+  }
+  timer = setTimeout(load, document.hidden ? 30000 : 8000);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+load();
+</script>
+</body>
+</html>
