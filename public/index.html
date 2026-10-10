@@ -93,11 +93,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,.strip:focus-visib
     </div>
     <div class="controls">
       <input id="q" type="search" placeholder="Search callsign, reg, type" aria-label="Search flights">
-      <select id="radius" aria-label="Search radius">
-        <option value="40">40 nm</option>
-        <option value="80" selected>80 nm</option>
-        <option value="150">150 nm</option>
-      </select>
       <button id="me" title="Center on my location">Near me</button>
     </div>
     <ul id="list"><li class="empty">Loading planes…</li></ul>
@@ -202,7 +197,21 @@ function draw() {
 $("list").addEventListener("click", e => { const li = e.target.closest(".strip"); if (li) select(li.dataset.hex, true); });
 $("list").addEventListener("keydown", e => { if (e.key === "Enter") { const li = e.target.closest(".strip"); if (li) select(li.dataset.hex, true); } });
 $("q").addEventListener("input", draw);
-$("radius").addEventListener("change", load);
+// Load planes for wherever the map is looking, once dragging/zooming stops.
+let moveTimer = null;
+map.on("moveend", () => {
+  clearTimeout(moveTimer);
+  moveTimer = setTimeout(() => {
+    const c = map.getCenter();
+    center = [c.lat, c.lng];
+    load();
+  }, 400);
+});
+// Radius = distance from map center to the corner, in nautical miles (API max 250).
+function viewRadius() {
+  const meters = map.getCenter().distanceTo(map.getBounds().getNorthEast());
+  return Math.max(5, Math.min(250, Math.round(meters / 1852)));
+}
 $("toggle").addEventListener("click", () => {
   const min = $("rail").classList.toggle("min");
   $("toggle").textContent = min ? "Show list" : "Hide list";
@@ -228,12 +237,13 @@ function setStatus(text, err) {
 async function load() {
   clearTimeout(timer);
   try {
-    const r = await fetch(`/api/planes?lat=${center[0]}&lon=${center[1]}&dist=${$("radius").value}`);
+    const r = await fetch(`/api/planes?lat=${center[0]}&lon=${center[1]}&dist=${viewRadius()}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d.error);
     planes = d.planes;
     draw();
-    setStatus(`Live · updated ${new Date().toLocaleTimeString("en-GB")}`);
+    const capped = map.getCenter().distanceTo(map.getBounds().getNorthEast()) / 1852 > 250;
+    setStatus(capped ? "Live · zoom in to see the whole view" : `Live · updated ${new Date().toLocaleTimeString("en-GB")}`);
   } catch (e) {
     setStatus(e.message || "Couldn't reach flight data. Retrying…", true);
   }
